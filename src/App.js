@@ -1,30 +1,47 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { supabase } from './supabaseClient';
 import './App.css';
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false); // 登入狀態
-  const [currentAccount, setCurrentAccount] = useState(''); // 儲存當前登入的帳號
-  const [account, setAccount] = useState(''); // 帳號輸入（登入用）
-  const [password, setPassword] = useState(''); // 密碼輸入（登入用）
-  const [error, setError] = useState(''); // 登入錯誤訊息
-  const [users, setUsers] = useState([ // 靜態 JSON 資料
-    { Account: "alice123", Password: "password1" },
-    { Account: "bob456", Password: "password2" },
-    { Account: "charlie789", Password: "password3" }
-  ]);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [currentAccount, setCurrentAccount] = useState('');
+  const [account, setAccount] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [users, setUsers] = useState([]);
+
+  // 從 Supabase 獲取所有用戶資料
+  const fetchUsers = async () => {
+    const { data, error } = await supabase.from('users').select('*');
+    if (error) {
+      console.error('獲取用戶資料失敗:', error);
+    } else {
+      setUsers(data);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
 
   // 登入表單提交
-  const handleLoginSubmit = (e) => {
+  const handleLoginSubmit = async (e) => {
     e.preventDefault();
-    const user = users.find(u => u.Account === account && u.Password === password);
-    if (user) {
-      setIsLoggedIn(true);
-      setCurrentAccount(account); // 儲存當前登入的帳號
-      setError('');
-      setAccount(''); // 清空輸入框
-      setPassword('');
-    } else {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('account', account)
+      .eq('password', password)
+      .single();
+
+    if (error || !user) {
       setError('帳號或密碼錯誤！');
+    } else {
+      setIsLoggedIn(true);
+      setCurrentAccount(account);
+      setError('');
+      setAccount('');
+      setPassword('');
     }
   };
 
@@ -34,30 +51,73 @@ function App() {
   const [editError, setEditError] = useState('');
 
   // 修改表單提交
-  const handleEditSubmit = (e) => {
+  const handleEditSubmit = async (e) => {
     e.preventDefault();
     if (!newAccount || !newPassword) {
       setEditError('請填寫所有欄位！');
       return;
     }
-    const accountExists = users.some(u => u.Account === newAccount && u.Account !== currentAccount);
+
+    const accountExists = users.some(
+      (u) => u.account === newAccount && u.account !== currentAccount
+    );
     if (accountExists) {
       setEditError('此帳號已被使用！');
       return;
     }
 
-    // 直接覆蓋當前登入用戶的資料
-    setUsers(users.map(u => 
-      u.Account === currentAccount 
-        ? { Account: newAccount, Password: newPassword }
-        : u
-    ));
-    setIsLoggedIn(false); // 修改完成後跳回登入畫面
-    setEditError('');
-    setNewAccount('');
-    setNewPassword('');
-    setAccount(''); // 確保回到登入畫面時輸入框清空
-    setPassword('');
+    const { error } = await supabase
+      .from('users')
+      .update({ account: newAccount, password: newPassword })
+      .eq('account', currentAccount);
+
+    if (error) {
+      setEditError('修改失敗，請稍後再試！');
+      console.error('修改錯誤:', error);
+    } else {
+      setUsers(
+        users.map((u) =>
+          u.account === currentAccount
+            ? { ...u, account: newAccount, password: newPassword }
+            : u
+        )
+      );
+      setIsLoggedIn(false);
+      setEditError('');
+      setNewAccount('');
+      setNewPassword('');
+      setAccount('');
+      setPassword('');
+    }
+  };
+
+  // 刪除帳號功能
+  const handleDeleteAccount = async () => {
+    if (!window.confirm('確定要刪除此帳號嗎？此操作無法復原！')) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('account', currentAccount);
+
+    if (error) {
+      setEditError('刪除帳號失敗，請稍後再試！');
+      console.error('刪除錯誤:', error);
+    } else {
+      // 更新前端用戶列表
+      setUsers(users.filter((u) => u.account !== currentAccount));
+      // 登出用戶
+      setIsLoggedIn(false);
+      setCurrentAccount('');
+      setEditError('');
+      setNewAccount('');
+      setNewPassword('');
+      setAccount('');
+      setPassword('');
+      alert('帳號已成功刪除！');
+    }
   };
 
   return (
@@ -67,11 +127,12 @@ function App() {
       </header>
       <main>
         <section>
-          {/* 無論是否登入，都顯示表格 */}
           <h3>所有用戶資訊</h3>
+          <button onClick={fetchUsers}>重新整理用戶列表</button>
           <table className="user-table">
             <thead>
               <tr>
+                <th>姓名</th>
                 <th>帳號</th>
                 <th>密碼</th>
               </tr>
@@ -79,14 +140,14 @@ function App() {
             <tbody>
               {users.map((user, index) => (
                 <tr key={index}>
-                  <td>{user.Account}</td>
-                  <td>{user.Password}</td>
+                  <td>{user.name}</td>
+                  <td>{user.account}</td>
+                  <td>{user.password}</td>
                 </tr>
               ))}
             </tbody>
           </table>
 
-          {/* 登入或修改畫面 */}
           {isLoggedIn ? (
             <>
               <h2>歡迎</h2>
@@ -114,6 +175,12 @@ function App() {
                 <button type="submit">保存修改</button>
               </form>
               {editError && <p style={{ color: 'red' }}>{editError}</p>}
+              <button
+                onClick={handleDeleteAccount}
+                style={{ backgroundColor: 'red', color: 'white', marginTop: '10px' }}
+              >
+                刪除帳號
+              </button>
             </>
           ) : (
             <>
@@ -140,7 +207,7 @@ function App() {
                 <button type="submit">登入</button>
               </form>
               {error && <p style={{ color: 'red' }}>{error}</p>}
-              <p>提示：嘗試使用帳號 "alice123" 和密碼 "password1"</p>
+              <p>提示：嘗試使用您在 Supabase 中註冊的帳號和密碼</p>
             </>
           )}
         </section>
